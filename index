@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Mobile-Friendly HTML osu!</title>
+    <style>
+        body {
+            margin: 0;
+            background-color: #000;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            width: 100vw;
+            color: white;
+            font-family: 'Arial', sans-serif;
+            overflow: hidden; /* Prevents scrolling */
+        }
+        #game-container {
+            position: relative;
+            /* Fills screen while maintaining 4:3 aspect ratio */
+            width: 100vw;
+            height: calc(100vw * 0.75);
+            max-height: 100vh;
+            max-width: calc(100vh / 0.75);
+            background-size: cover;
+            background-position: center;
+            cursor: pointer;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 1vh;
+            left: 2vw;
+            font-size: 3vmin; /* Scales font with screen size */
+            text-shadow: 2px 2px 4px #000;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+        <div id="ui-layer">
+            <p>Score: <span id="score">0</span></p>
+            <p>Combo: <span id="combo">0</span></p>
+        </div>
+    </div>
+
+    <script>
+        const gameContainer = document.getElementById('game-container');
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('score');
+        const comboDisplay = document.getElementById('combo');
+
+        // --- Game Settings (using a base resolution) ---
+        const baseWidth = 800;
+        const baseHeight = 600;
+        const baseCircleRadius = 50;
+        const approachRate = 900; // ms
+        const audioFile = 'song.mp3';
+        const backgroundImage = 'background.jpg';
+
+        // --- Game State ---
+        let scale = 1;
+        let score = 0;
+        let combo = 0;
+        let audioContext;
+        let startTime;
+        let hitObjects = [];
+        let nextHitObjectIndex = 0;
+
+        // --- Beatmap (Hardcoded, coordinates based on 800x600 grid) ---
+        const beatmap = {
+            hitObjects: [
+                { x: 200, y: 300, time: 1000 },
+                { x: 400, y: 200, time: 2000 },
+                { x: 600, y: 300, time: 3000 },
+                { x: 400, y: 400, time: 4000 },
+                { x: 200, y: 300, time: 5000 },
+            ]
+        };
+
+        // --- Main Game Logic ---
+
+        function init() {
+            gameContainer.style.backgroundImage = `url(${backgroundImage})`;
+            hitObjects = beatmap.hitObjects.sort((a, b) => a.time - b.time);
+            
+            // Add listeners for both mouse and touch
+            canvas.addEventListener('click', handleInteraction);
+            canvas.addEventListener('touchstart', handleInteraction);
+            window.addEventListener('resize', resizeCanvas);
+            
+            resizeCanvas();
+            loadAudio();
+        }
+
+        function resizeCanvas() {
+            const rect = gameContainer.getBoundingClientRect();
+            canvas.width = rect.width;
+            canvas.height = rect.height;
+            // Calculate a uniform scale factor based on width
+            scale = canvas.width / baseWidth;
+        }
+
+        async function loadAudio() {
+            window.AudioContext = window.AudioContext || window.webkitAudioContext;
+            
+            canvas.addEventListener('click', () => {
+                if (!audioContext) { // Prevents starting on every click
+                    audioContext = new AudioContext();
+                    fetch(audioFile)
+                        .then(response => response.arrayBuffer())
+                        .then(arrayBuffer => audioContext.decodeAudioData(arrayBuffer))
+                        .then(audioBuffer => {
+                            const source = audioContext.createBufferSource();
+                            source.buffer = audioBuffer;
+                            source.connect(audioContext.destination);
+                            source.start();
+
+                            startTime = audioContext.currentTime * 1000;
+                            requestAnimationFrame(gameLoop);
+                        }).catch(e => {
+                            console.error('Error loading audio:', e);
+                            alert('Could not load audio. Make sure "song.mp3" is in the same directory and you have clicked the screen to start.');
+                        });
+                }
+            }, { once: true }); // This listener runs only once to start the audio
+        }
+
+        function gameLoop() {
+            if (!audioContext) return;
+            const currentTime = (audioContext.currentTime * 1000) - startTime;
+            update(currentTime);
+            draw(currentTime);
+            requestAnimationFrame(gameLoop);
+        }
+
+        function update(currentTime) {
+            // Check for missed notes
+            if (nextHitObjectIndex < beatmap.hitObjects.length) {
+                const nextObject = beatmap.hitObjects[nextHitObjectIndex];
+                if (currentTime > nextObject.time + 200) { // 200ms timing window for a miss
+                    combo = 0;
+                    comboDisplay.textContent = combo;
+                    nextHitObjectIndex++;
+                }
+            }
+        }
+        
+        function draw(currentTime) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const activeObjects = beatmap.hitObjects.filter(obj => 
+                currentTime > obj.time - approachRate && currentTime < obj.time + 200
+            );
+
+            activeObjects.forEach(obj => {
+                const timeDiff = obj.time - currentTime;
+                
+                // Scale all gameplay elements
+                const x = obj.x * scale;
+                const y = obj.y * scale;
+                const radius = baseCircleRadius * scale;
+                
+                // Draw approach circle
+                if (timeDiff > 0) {
+                    const approachRadius = radius + (radius * timeDiff) / approachRate;
+                    ctx.beginPath();
+                    ctx.arc(x, y, approachRadius, 0, 2 * Math.PI);
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+                    ctx.lineWidth = 5 * scale;
+                    ctx.stroke();
+                }
+
+                // Draw hit circle
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, 2 * Math.PI);
+                ctx.fillStyle = 'rgba(255, 0, 100, 0.7)';
+                ctx.fill();
+
+                // Draw number
+                ctx.fillStyle = 'white';
+                ctx.font = `bold ${30 * scale}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(beatmap.hitObjects.indexOf(obj) + 1, x, y);
+            });
+        }
+
+        function handleInteraction(event) {
+            event.preventDefault(); // Important for mobile to prevent zoom/scroll
+            if (!audioContext) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const clientX = event.touches ? event.touches[0].clientX : event.clientX;
+            const clientY = event.touches ? event.touches[0].clientY : event.clientY;
+
+            const x = clientX - rect.left;
+            const y = clientY - rect.top;
+            const currentTime = (audioContext.currentTime * 1000) - startTime;
+            
+            // Find the object that should be hit
+            const targetObject = beatmap.hitObjects[nextHitObjectIndex];
+            if (!targetObject) return;
+
+            const scaledX = targetObject.x * scale;
+            const scaledY = targetObject.y * scale;
+            const scaledRadius = baseCircleRadius * scale;
+
+            const dx = x - scaledX;
+            const dy = y - scaledY;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance <= scaledRadius) {
+                const timingDiff = Math.abs(currentTime - targetObject.time);
+
+                if (timingDiff < 200) { // Hit window of 200ms
+                    let currentScore = 0;
+                    if (timingDiff < 80) currentScore = 300;
+                    else if (timingDiff < 150) currentScore = 100;
+                    else currentScore = 50;
+                    
+                    score += currentScore;
+                    combo++;
+                    
+                    scoreDisplay.textContent = score;
+                    comboDisplay.textContent
